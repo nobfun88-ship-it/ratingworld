@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>World & City Rating V8</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700&display=swap" rel="stylesheet">
+<script src="https://d3js.org/d3.v7.min.js"></script>
+
+<style>
+body{font-family:Arial,sans-serif;background:#0f172a;color:white;text-align:center;}
+h1{margin-top:20px;font-family:'Poppins',sans-serif;font-weight:700;font-size:36px;color:#fefefe;text-shadow:1px 1px 3px rgba(0,0,0,0.5);}
+#map{margin:auto;width:1000px;height:600px;background:#111827;border-radius:10px;position:relative;}
+.panel{position:absolute;top:120px;left:50%;transform:translateX(-50%);background:#1f2937;padding:20px;border-radius:10px;width:320px;display:none;}
+button{margin:3px;padding:6px 10px;border:none;border-radius:5px;cursor:pointer;}
+.slider{margin-top:10px;}
+.rating button{width:35px;margin:2px;}
+.legend{margin-top:20px;font-size:14px;color:#ddd;text-align:left;width:1000px;margin-left:auto;margin-right:auto;}
+.city-dot{stroke:black;stroke-width:0.5px;cursor:pointer;}
+.city-label{font-size:10px;fill:white;text-anchor:middle;pointer-events:none;font-weight:bold;}
+button.disabled{opacity:0.5;cursor:not-allowed;}
+</style>
+</head>
+
+<body>
+<h1>World & City Rating V8</h1>
+
+<div id="map"></div>
+
+<div class="panel" id="panel">
+<button onclick="closePanel()" style="float:right;">X</button>
+<h2 id="panelName"></h2>
+<div id="average"></div>
+<div id="countRatings"></div>
+<button onclick="resetRating()">Reset ratings</button>
+
+<div class="slider">
+Food<br><input type="range" min="0" max="10" value="5" id="food">
+</div>
+<div class="slider">
+People<br><input type="range" min="0" max="10" value="5" id="people">
+</div>
+<div class="slider">
+Nature<br><input type="range" min="0" max="10" value="5" id="nature">
+</div>
+<div class="slider">
+Architecture<br><input type="range" min="0" max="10" value="5" id="arch">
+</div>
+<div class="slider">
+History<br><input type="range" min="0" max="10" value="5" id="history">
+</div>
+
+<div class="rating" id="ratingButtons">
+<button onclick="rate(1)">1</button>
+<button onclick="rate(2)">2</button>
+<button onclick="rate(3)">3</button>
+<button onclick="rate(4)">4</button>
+<button onclick="rate(5)">5</button>
+<button onclick="rate(6)">6</button>
+<button onclick="rate(7)">7</button>
+<button onclick="rate(8)">8</button>
+<button onclick="rate(9)">9</button>
+<button onclick="rate(10)">10</button>
+</div>
+</div>
+
+<div class="legend">
+<b>Color legend:</b><br>
+🔵 10–9.7: Absolute peak<br>
+🟢 9.6–9: Grandiose<br>
+🟢 8.9–8: Masterpiece<br>
+🟡 7.9–7: Good<br>
+🟠 6.9–6: Questionable<br>
+🔴 5.9–5: Bad<br>
+🟣 4.9–1.0: Terrible<br>
+</div>
+
+<script>
+// === STORAGE ===
+let ratings=JSON.parse(localStorage.getItem("ratings")||"{}")
+let cityRatings=JSON.parse(localStorage.getItem("cityRatings")||"{}")
+let votedCountries=JSON.parse(localStorage.getItem("votedCountries")||"{}")
+let votedCities=JSON.parse(localStorage.getItem("votedCities")||"{}")
+
+let selected=null, isCity=false
+
+const cities=[
+  {name:"New York", coord:[-74.006,40.7128]},
+  {name:"Paris", coord:[2.3522,48.8566]},
+  {name:"London", coord:[-0.1276,51.5074]},
+  {name:"Edinburgh", coord:[-3.1883,55.9533]},
+  {name:"Stockholm", coord:[18.0686,59.3293]},
+  {name:"Moscow", coord:[37.6173,55.7558]},
+  {name:"Saint Petersburg", coord:[30.3351,59.9343]},
+  {name:"Beijing", coord:[116.4074,39.9042]},
+  {name:"Bangkok", coord:[100.5018,13.7563]},
+  {name:"New Delhi", coord:[77.1025,28.6139]},
+  {name:"Cairo", coord:[31.2357,30.0444]},
+  {name:"Kyiv", coord:[30.5234,50.4501]},
+  {name:"Warsaw", coord:[21.0122,52.2297]},
+  {name:"Rio de Janeiro", coord:[-43.1729,-22.9068]},
+  {name:"Tokyo", coord:[139.6917,35.6895]},
+  {name:"Rome", coord:[12.4964,41.9028]},
+  {name:"Ottawa", coord:[-75.6972,45.4215]},
+  {name:"Astana", coord:[71.4278,51.1605]}
+]
+
+function getAverage(list){if(!list||list.length===0) return null;let sum=0;list.forEach(r=>sum+=r.rating);return (sum/list.length).toFixed(1)}
+function getColor(avg){if(avg==null)return "#777";if(avg>=9.7)return "#2563eb";if(avg>=9)return "#065f46";if(avg>=8)return "#16a34a";if(avg>=7)return "#fde047";if(avg>=6)return "#fb923c";if(avg>=5)return "#dc2626";return "#7c3aed"}
+
+function closePanel(){document.getElementById("panel").style.display="none"; selected=null; isCity=false}
+
+function resetRating(){
+  if(!selected) return
+  if(isCity){ cityRatings[selected]=[]; votedCities[selected]=false; localStorage.setItem("cityRatings",JSON.stringify(cityRatings)); localStorage.setItem("votedCities",JSON.stringify(votedCities)) }
+  else{ ratings[selected]=[]; votedCountries[selected]=false; localStorage.setItem("ratings",JSON.stringify(ratings)); localStorage.setItem("votedCountries",JSON.stringify(votedCountries)) }
+  drawMap()
+  showPanel(selected,isCity)
+}
+
+function showPanel(name,city=false){
+  selected=name
+  isCity=city
+  let list=city?cityRatings[name]:ratings[name]
+  let voted=city?votedCities[name]:votedCountries[name]
+  let avg=getAverage(list)
+  document.getElementById("panel").style.display="block"
+  document.getElementById("panelName").innerText=name
+  document.getElementById("average").innerText=avg?("Average rating: "+avg):"No ratings yet"
+  document.getElementById("countRatings").innerText=list?("Number of ratings: "+list.length):"Number of ratings: 0"
+
+  // показываем средние ползунки
+  if(list && list.length>0){
+    let sums={food:0,people:0,nature:0,arch:0,history:0}
+    list.forEach(r=>{sums.food+=r.food; sums.people+=r.people; sums.nature+=r.nature; sums.arch+=r.arch; sums.history+=r.history})
+    document.getElementById("food").value=(sums.food/list.length).toFixed(0)
+    document.getElementById("people").value=(sums.people/list.length).toFixed(0)
+    document.getElementById("nature").value=(sums.nature/list.length).toFixed(0)
+    document.getElementById("arch").value=(sums.arch/list.length).toFixed(0)
+    document.getElementById("history").value=(sums.history/list.length).toFixed(0)
+  } else {
+    document.getElementById("food").value=5
+    document.getElementById("people").value=5
+    document.getElementById("nature").value=5
+    document.getElementById("arch").value=5
+    document.getElementById("history").value=5
+  }
+
+  // блокируем кнопки если уже голосовал
+  let buttons=document.querySelectorAll("#ratingButtons button")
+  buttons.forEach(b=>b.classList.remove("disabled"))
+  if(voted){buttons.forEach(b=>b.classList.add("disabled"))}
+}
+
+function rate(n){
+  if(!selected) return
+  let voted= isCity?votedCities[selected]:votedCountries[selected]
+  if(voted) return
+
+  let review={
+    rating:n,
+    food:+document.getElementById("food").value,
+    people:+document.getElementById("people").value,
+    nature:+document.getElementById("nature").value,
+    arch:+document.getElementById("arch").value,
+    history:+document.getElementById("history").value
+  }
+
+  if(isCity){
+    if(!cityRatings[selected]) cityRatings[selected]=[]
+    cityRatings[selected].push(review)
+    votedCities[selected]=true
+    localStorage.setItem("cityRatings",JSON.stringify(cityRatings))
+    localStorage.setItem("votedCities",JSON.stringify(votedCities))
+  } else {
+    if(!ratings[selected]) ratings[selected]=[]
+    ratings[selected].push(review)
+    votedCountries[selected]=true
+    localStorage.setItem("ratings",JSON.stringify(ratings))
+    localStorage.setItem("votedCountries",JSON.stringify(votedCountries))
+  }
+
+  drawMap()
+  showPanel(selected,isCity)
+}
+
+// MAP
+const width=1000, height=600
+const svg=d3.select("#map").append("svg").attr("width",width).attr("height",height)
+const g=svg.append("g")
+const zoom=d3.zoom().scaleExtent([1,8]).on("zoom",(event)=>{ g.attr("transform",event.transform) })
+svg.call(zoom)
+const projection=d3.geoNaturalEarth1().scale(170).translate([width/2,height/2])
+const path=d3.geoPath().projection(projection)
+
+function drawMap(){
+  g.selectAll("*").remove()
+  d3.json("https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson")
+  .then(function(data){
+    let countries=data.features.filter(d=>d.properties.name!=="Antarctica")
+    g.selectAll("path").data(countries).enter()
+      .append("path")
+      .attr("d",path)
+      .attr("stroke","#111")
+      .attr("fill",d=>getColor(getAverage(ratings[d.properties.name])))
+      .on("click",(event,d)=>{showPanel(d.properties.name,false)})
+
+    g.selectAll("circle").data(cities).enter()
+      .append("circle")
+      .attr("class","city-dot")
+      .attr("cx",d=>projection(d.coord)[0])
+      .attr("cy",d=>projection(d.coord)[1])
+      .attr("r",1.5) // уменьшено
+      .attr("fill",d=>getColor(getAverage(cityRatings[d.name])))
+      .on("click",(event,d)=>{showPanel(d.name,true)})
+
+    g.selectAll("text.city-label").data(cities).enter()
+      .append("text")
+      .attr("class","city-label")
+      .attr("x",d=>projection(d.coord)[0])
+      .attr("y",d=>projection(d.coord)[1]+6)
+      .text(d=>getAverage(cityRatings[d.name])||"")
+  })
+}
+
+drawMap()
+</script>
+</body>
+</html>
